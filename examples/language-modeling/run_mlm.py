@@ -327,7 +327,9 @@ def main():
         # efficient when it receives the `special_tokens_mask`.
         def tokenize_function(examples):
             return tokenizer(examples[text_column_name], return_special_tokens_mask=True)
-
+        
+        
+        print("Datasets preparing...")
         tokenized_datasets = datasets.map(
             tokenize_function,
             batched=True,
@@ -335,7 +337,7 @@ def main():
             remove_columns=column_names,
             load_from_cache_file=not data_args.overwrite_cache,
         )
-
+        print("Datasets prepared!")
         if data_args.max_seq_length is None:
             max_seq_length = tokenizer.model_max_length
         else:
