@@ -388,7 +388,8 @@ def main():
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm_probability=data_args.mlm_probability)
 
     
-    print(datasets["train"][:2])
+    print(tokenized_datasets["train"][:2])
+    print(tokenized_datasets["validation"][:2])
     # Initialize our Trainer
     trainer = Trainer(
         model=model,
