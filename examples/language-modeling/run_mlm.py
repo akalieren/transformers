@@ -313,14 +313,16 @@ def main():
                 # receives the `special_tokens_mask`.
                 return_special_tokens_mask=True,
             )
-
-        tokenized_datasets = datasets.map(
-            tokenize_function,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            remove_columns=[text_column_name],
-            load_from_cache_file=not data_args.overwrite_cache,
-        )
+        
+        datasets.set_transform(tokenize_function)
+        # tokenized_datasets = datasets.map(
+        #    tokenize_function,
+        #    batched=True,
+        #    num_proc=data_args.preprocessing_num_workers,
+        #    remove_columns=[text_column_name],
+        #    load_from_cache_file=not data_args.overwrite_cache,
+        # )
+        
     else:
         # Otherwise, we tokenize every text, then concatenate them together before splitting them in smaller parts.
         # We use `return_special_tokens_mask=True` because DataCollatorForLanguageModeling (see below) is more
@@ -330,13 +332,14 @@ def main():
         
         
         print("Datasets preparing...")
-        tokenized_datasets = datasets.map(
-            tokenize_function,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            remove_columns=column_names,
-            load_from_cache_file=not data_args.overwrite_cache,
-        )
+        datasets.set_transform(tokenize_function)
+        # tokenized_datasets = datasets.map(
+        #     tokenize_function,
+        #     batched=True,
+        #     num_proc=data_args.preprocessing_num_workers,
+        #     remove_columns=column_names,
+        #     load_from_cache_file=not data_args.overwrite_cache,
+        # )
         print("Datasets prepared!")
         if data_args.max_seq_length is None:
             max_seq_length = tokenizer.model_max_length
@@ -385,8 +388,8 @@ def main():
     trainer = Trainer(
         model=model,
         args=training_args,
-        train_dataset=tokenized_datasets["train"] if training_args.do_train else None,
-        eval_dataset=tokenized_datasets["validation"] if training_args.do_eval else None,
+        train_dataset=datasets["train"] if training_args.do_train else None,
+        eval_dataset=datasets["validation"] if training_args.do_eval else None,
         tokenizer=tokenizer,
         data_collator=data_collator,
     )
