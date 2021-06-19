@@ -389,7 +389,6 @@ def main():
 
     
     print(tokenized_datasets["train"][:2])
-    print(tokenized_datasets["validation"][:2])
     # Initialize our Trainer
     trainer = Trainer(
         model=model,
