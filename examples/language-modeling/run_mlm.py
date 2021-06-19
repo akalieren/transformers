@@ -293,8 +293,10 @@ def main():
     # First we tokenize all the texts.
     if training_args.do_train:
         column_names = datasets["train"].column_names
+        print("training_columns", column_names)
     else:
         column_names = datasets["validation"].column_names
+        
     text_column_name = "text" if "text" in column_names else column_names[0]
 
     if data_args.line_by_line:
@@ -332,14 +334,15 @@ def main():
         
         
         print("Datasets preparing...")
-        datasets.set_transform(tokenize_function)
-        # tokenized_datasets = datasets.map(
-        #     tokenize_function,
-        #     batched=True,
-        #     num_proc=data_args.preprocessing_num_workers,
-        #     remove_columns=column_names,
-        #     load_from_cache_file=not data_args.overwrite_cache,
-        # )
+        # datasets.set_transform(tokenize_function)
+        tokenized_datasets = datasets.map(
+            tokenize_function,
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            remove_columns=column_names,
+            load_from_cache_file=not data_args.overwrite_cache,
+        )
+        
         print("Datasets prepared!")
         if data_args.max_seq_length is None:
             max_seq_length = tokenizer.model_max_length
@@ -373,12 +376,12 @@ def main():
         #
         # To speed up this part, we use multiprocessing. See the documentation of the map method for more information:
         # https://huggingface.co/docs/datasets/package_reference/main_classes.html#datasets.Dataset.map
-        # tokenized_datasets = tokenized_datasets.map(
-        #     group_texts,
-        #     batched=True,
-        #     num_proc=data_args.preprocessing_num_workers,
-        #     load_from_cache_file=not data_args.overwrite_cache,
-        # )
+        tokenized_datasets = tokenized_datasets.map(
+            group_texts,
+            batched=True,
+            num_proc=data_args.preprocessing_num_workers,
+            load_from_cache_file=not data_args.overwrite_cache,
+        )
 
     # Data collator
     # This one will take care of randomly masking the tokens.
@@ -390,8 +393,8 @@ def main():
     trainer = Trainer(
         model=model,
         args=training_args,
-        train_dataset=datasets["train"] if training_args.do_train else None,
-        eval_dataset=datasets["validation"] if training_args.do_eval else None,
+        train_dataset=tokenized_datasets["train"] if training_args.do_train else None,
+        eval_dataset=tokenized_datasets["validation"] if training_args.do_eval else None,
         tokenizer=tokenizer,
         data_collator=data_collator,
     )
