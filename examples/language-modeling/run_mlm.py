@@ -328,7 +328,7 @@ def main():
         # We use `return_special_tokens_mask=True` because DataCollatorForLanguageModeling (see below) is more
         # efficient when it receives the `special_tokens_mask`.
         def tokenize_function(examples):
-            return tokenizer(examples[text_column_name], return_special_tokens_mask=True)
+            return tokenizer(examples[text_column_name], return_special_tokens_mask=True, padding="longest", truncation=True, max_length=data_args.max_seq_length, return_tensors="pt")
         
         
         print("Datasets preparing...")
