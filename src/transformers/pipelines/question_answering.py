@@ -4,9 +4,10 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Union
 import numpy as np
 
 from ..data import SquadExample, SquadFeatures, squad_convert_examples_to_features
-from ..file_utils import PaddingStrategy, add_end_docstrings, is_tf_available, is_torch_available
+from ..file_utils import add_end_docstrings, is_tf_available, is_torch_available
 from ..modelcard import ModelCard
 from ..tokenization_utils import PreTrainedTokenizer
+from ..tokenization_utils_base import PaddingStrategy
 from .base import PIPELINE_INIT_ARGS, ArgumentHandler, Pipeline
 
 
@@ -42,12 +43,12 @@ class QuestionAnsweringArgumentHandler(ArgumentHandler):
                 if k not in item:
                     raise KeyError("You need to provide a dictionary with keys {question:..., context:...}")
                 elif item[k] is None:
-                    raise ValueError(f"`{k}` cannot be None")
+                    raise ValueError("`{}` cannot be None".format(k))
                 elif isinstance(item[k], str) and len(item[k]) == 0:
-                    raise ValueError(f"`{k}` cannot be empty")
+                    raise ValueError("`{}` cannot be empty".format(k))
 
             return QuestionAnsweringPipeline.create_sample(**item)
-        raise ValueError(f"{item} argument needs to be of type (SquadExample, dict)")
+        raise ValueError("{} argument needs to be of type (SquadExample, dict)".format(item))
 
     def __call__(self, *args, **kwargs):
         # Detect where the actual inputs are
@@ -77,7 +78,7 @@ class QuestionAnsweringArgumentHandler(ArgumentHandler):
             else:
                 raise ValueError("Arguments can't be understood")
         else:
-            raise ValueError(f"Unknown arguments {kwargs}")
+            raise ValueError("Unknown arguments {}".format(kwargs))
 
         # Normalize inputs
         if isinstance(inputs, dict):
@@ -86,7 +87,7 @@ class QuestionAnsweringArgumentHandler(ArgumentHandler):
             # Copy to avoid overriding arguments
             inputs = [i for i in inputs]
         else:
-            raise ValueError(f"Invalid arguments {kwargs}")
+            raise ValueError("Invalid arguments {}".format(inputs))
 
         for i, item in enumerate(inputs):
             inputs[i] = self.normalize(item)
@@ -177,8 +178,7 @@ class QuestionAnsweringPipeline(Pipeline):
                 One or several context(s) associated with the question(s) (must be used in conjunction with the
                 :obj:`question` argument).
             topk (:obj:`int`, `optional`, defaults to 1):
-                The number of answers to return (will be chosen by order of likelihood). Note that we return less than
-                topk answers if there are not enough options available within the context.
+                The number of answers to return (will be chosen by order of likelihood).
             doc_stride (:obj:`int`, `optional`, defaults to 128):
                 If the context is too long to fit with the question for the model, it will be split in several chunks
                 with some overlap. This argument controls the size of that overlap.
@@ -196,9 +196,8 @@ class QuestionAnsweringPipeline(Pipeline):
             A :obj:`dict` or a list of :obj:`dict`: Each result comes as a dictionary with the following keys:
 
             - **score** (:obj:`float`) -- The probability associated to the answer.
-            - **start** (:obj:`int`) -- The character start index of the answer (in the tokenized version of the
-              input).
-            - **end** (:obj:`int`) -- The character end index of the answer (in the tokenized version of the input).
+            - **start** (:obj:`int`) -- The start index of the answer (in the tokenized version of the input).
+            - **end** (:obj:`int`) -- The end index of the answer (in the tokenized version of the input).
             - **answer** (:obj:`str`) -- The answer to the question.
         """
         # Set defaults values
@@ -211,10 +210,10 @@ class QuestionAnsweringPipeline(Pipeline):
         kwargs.setdefault("handle_impossible_answer", False)
 
         if kwargs["topk"] < 1:
-            raise ValueError(f"topk parameter should be >= 1 (got {kwargs['topk']})")
+            raise ValueError("topk parameter should be >= 1 (got {})".format(kwargs["topk"]))
 
         if kwargs["max_answer_len"] < 1:
-            raise ValueError(f"max_answer_len parameter should be >= 1 (got {(kwargs['max_answer_len'])}")
+            raise ValueError("max_answer_len parameter should be >= 1 (got {})".format(kwargs["max_answer_len"]))
 
         # Convert inputs to features
         examples = self._args_parser(*args, **kwargs)
@@ -269,7 +268,7 @@ class QuestionAnsweringPipeline(Pipeline):
                 )
 
                 # keep the cls_token unmasked (some models use it to indicate unanswerable questions)
-                if self.tokenizer.cls_token_id is not None:
+                if self.tokenizer.cls_token_id:
                     cls_index = np.nonzero(encoded_inputs["input_ids"] == self.tokenizer.cls_token_id)
                     p_mask[cls_index] = 0
 
@@ -301,7 +300,7 @@ class QuestionAnsweringPipeline(Pipeline):
 
         all_answers = []
         for features, example in zip(features_list, examples):
-            model_input_names = self.tokenizer.model_input_names
+            model_input_names = self.tokenizer.model_input_names + ["input_ids"]
             fw_args = {k: [feature.__dict__[k] for feature in features] for k in model_input_names}
 
             # Manage tensor allocation on correct device
@@ -342,9 +341,7 @@ class QuestionAnsweringPipeline(Pipeline):
                 # Mask CLS
                 start_[0] = end_[0] = 0.0
 
-                starts, ends, scores = self.decode(
-                    start_, end_, kwargs["topk"], kwargs["max_answer_len"], undesired_tokens
-                )
+                starts, ends, scores = self.decode(start_, end_, kwargs["topk"], kwargs["max_answer_len"])
                 if not self.tokenizer.is_fast:
                     char_to_word = np.array(example.char_to_word_offset)
 
@@ -406,9 +403,7 @@ class QuestionAnsweringPipeline(Pipeline):
             return all_answers[0]
         return all_answers
 
-    def decode(
-        self, start: np.ndarray, end: np.ndarray, topk: int, max_answer_len: int, undesired_tokens: np.ndarray
-    ) -> Tuple:
+    def decode(self, start: np.ndarray, end: np.ndarray, topk: int, max_answer_len: int) -> Tuple:
         """
         Take the output of any :obj:`ModelForQuestionAnswering` and will generate probabilities for each span to be the
         actual answer.
@@ -422,7 +417,6 @@ class QuestionAnsweringPipeline(Pipeline):
             end (:obj:`np.ndarray`): Individual end probabilities for each token.
             topk (:obj:`int`): Indicates how many possible answer span(s) to extract from the model output.
             max_answer_len (:obj:`int`): Maximum size of the answer to extract from the model's output.
-            undesired_tokens (:obj:`np.ndarray`): Mask determining tokens that can be part of the answer
         """
         # Ensure we have batch axis
         if start.ndim == 1:
@@ -447,13 +441,8 @@ class QuestionAnsweringPipeline(Pipeline):
             idx = np.argpartition(-scores_flat, topk)[0:topk]
             idx_sort = idx[np.argsort(-scores_flat[idx])]
 
-        starts, ends = np.unravel_index(idx_sort, candidates.shape)[1:]
-        desired_spans = np.isin(starts, undesired_tokens.nonzero()) & np.isin(ends, undesired_tokens.nonzero())
-        starts = starts[desired_spans]
-        ends = ends[desired_spans]
-        scores = candidates[0, starts, ends]
-
-        return starts, ends, scores
+        start, end = np.unravel_index(idx_sort, candidates.shape)[1:]
+        return start, end, candidates[0, start, end]
 
     def span_to_answer(self, text: str, start: int, end: int) -> Dict[str, Union[str, int]]:
         """

@@ -24,23 +24,9 @@ from .tokenization_blenderbot_small import BlenderbotSmallTokenizer
 
 logger = logging.get_logger(__name__)
 
-VOCAB_FILES_NAMES = {
-    "vocab_file": "vocab.json",
-    "merges_file": "merges.txt",
-    "tokenizer_config_file": "tokenizer_config.json",
-}
+VOCAB_FILES_NAMES = {}
 
-PRETRAINED_VOCAB_FILES_MAP = {
-    "vocab_file": {
-        "facebook/blenderbot_small-90M": "https://huggingface.co/facebook/blenderbot_small-90M/resolve/main/vocab.json"
-    },
-    "merges_file": {
-        "facebook/blenderbot_small-90M": "https://huggingface.co/facebook/blenderbot_small-90M/resolve/main/merges.txt"
-    },
-    "tokenizer_config_file": {
-        "facebook/blenderbot_small-90M": "https://huggingface.co/facebook/blenderbot_small-90M/resolve/main/tokenizer_config.json"
-    },
-}
+PRETRAINED_VOCAB_FILES_MAP = {}
 
 PRETRAINED_POSITIONAL_EMBEDDINGS_SIZES = {
     "facebook/blenderbot_small-90M": 512,

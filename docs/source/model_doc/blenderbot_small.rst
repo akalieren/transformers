@@ -39,8 +39,7 @@ and code publicly available. Human evaluations show our best models are superior
 dialogue in terms of engagingness and humanness measurements. We then discuss the limitations of this work by analyzing
 failure cases of our models.*
 
-This model was contributed by `patrickvonplaten <https://huggingface.co/patrickvonplaten>`__. The authors' code can be
-found `here <https://github.com/facebookresearch/ParlAI>`__ .
+The authors' code can be found `here <https://github.com/facebookresearch/ParlAI>`__ .
 
 BlenderbotSmallConfig
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -68,13 +67,6 @@ BlenderbotSmallForConditionalGeneration
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. autoclass:: transformers.BlenderbotSmallForConditionalGeneration
-    :members: forward
-
-
-BlenderbotSmallForCausalLM
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. autoclass:: transformers.BlenderbotSmallForCausalLM
     :members: forward
 
 

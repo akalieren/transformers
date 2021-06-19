@@ -70,17 +70,8 @@ if is_tf_available():
     ]
 
 if is_flax_available():
-    _import_structure["modeling_flax_bert"] = [
-        "FlaxBertForMaskedLM",
-        "FlaxBertForMultipleChoice",
-        "FlaxBertForNextSentencePrediction",
-        "FlaxBertForPreTraining",
-        "FlaxBertForQuestionAnswering",
-        "FlaxBertForSequenceClassification",
-        "FlaxBertForTokenClassification",
-        "FlaxBertModel",
-        "FlaxBertPreTrainedModel",
-    ]
+    _import_structure["modeling_flax_bert"] = ["FlaxBertForMaskedLM", "FlaxBertModel"]
+
 
 if TYPE_CHECKING:
     from .configuration_bert import BERT_PRETRAINED_CONFIG_ARCHIVE_MAP, BertConfig
@@ -124,17 +115,7 @@ if TYPE_CHECKING:
         )
 
     if is_flax_available():
-        from .modeling_flax_bert import (
-            FlaxBertForMaskedLM,
-            FlaxBertForMultipleChoice,
-            FlaxBertForNextSentencePrediction,
-            FlaxBertForPreTraining,
-            FlaxBertForQuestionAnswering,
-            FlaxBertForSequenceClassification,
-            FlaxBertForTokenClassification,
-            FlaxBertModel,
-            FlaxBertPreTrainedModel,
-        )
+        from .modeling_flax_bert import FlaxBertForMaskedLM, FlaxBertModel
 
 else:
     import importlib

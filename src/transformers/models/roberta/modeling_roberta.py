@@ -18,9 +18,8 @@
 import math
 
 import torch
-import torch.utils.checkpoint
-from torch import nn
-from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
+import torch.nn as nn
+from torch.nn import CrossEntropyLoss, MSELoss
 
 from ...activations import ACT2FN, gelu
 from ...file_utils import (
@@ -51,7 +50,6 @@ from .configuration_roberta import RobertaConfig
 
 logger = logging.get_logger(__name__)
 
-_CHECKPOINT_FOR_DOC = "roberta-base"
 _CONFIG_FOR_DOC = "RobertaConfig"
 _TOKENIZER_FOR_DOC = "RobertaTokenizer"
 
@@ -149,8 +147,8 @@ class RobertaSelfAttention(nn.Module):
         super().__init__()
         if config.hidden_size % config.num_attention_heads != 0 and not hasattr(config, "embedding_size"):
             raise ValueError(
-                f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
-                f"heads ({config.num_attention_heads})"
+                "The hidden size (%d) is not a multiple of the number of attention "
+                "heads (%d)" % (config.hidden_size, config.num_attention_heads)
             )
 
         self.num_attention_heads = config.num_attention_heads
@@ -480,15 +478,7 @@ class RobertaEncoder(nn.Module):
 
             layer_head_mask = head_mask[i] if head_mask is not None else None
             past_key_value = past_key_values[i] if past_key_values is not None else None
-
-            if getattr(self.config, "gradient_checkpointing", False) and self.training:
-
-                if use_cache:
-                    logger.warning(
-                        "`use_cache=True` is incompatible with `config.gradient_checkpointing=True`. Setting "
-                        "`use_cache=False`..."
-                    )
-                    use_cache = False
+            if getattr(self.config, "gradient_checkpointing", False):
 
                 def create_custom_forward(module):
                     def custom_forward(*inputs):
@@ -574,20 +564,16 @@ class RobertaPreTrainedModel(PreTrainedModel):
 
     # Copied from transformers.models.bert.modeling_bert.BertPreTrainedModel._init_weights
     def _init_weights(self, module):
-        """Initialize the weights"""
-        if isinstance(module, nn.Linear):
+        """ Initialize the weights """
+        if isinstance(module, (nn.Linear, nn.Embedding)):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
             module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-            if module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-            if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
         elif isinstance(module, nn.LayerNorm):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
+        if isinstance(module, nn.Linear) and module.bias is not None:
+            module.bias.data.zero_()
 
 
 ROBERTA_START_DOCSTRING = r"""
@@ -710,7 +696,7 @@ class RobertaModel(RobertaPreTrainedModel):
     @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("(batch_size, sequence_length)"))
     @add_code_sample_docstrings(
         tokenizer_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
+        checkpoint="roberta-base",
         output_type=BaseModelOutputWithPoolingAndCrossAttentions,
         config_class=_CONFIG_FOR_DOC,
     )
@@ -737,10 +723,8 @@ class RobertaModel(RobertaPreTrainedModel):
             the model is configured as a decoder.
         encoder_attention_mask (:obj:`torch.FloatTensor` of shape :obj:`(batch_size, sequence_length)`, `optional`):
             Mask to avoid performing attention on the padding token indices of the encoder input. This mask is used in
-            the cross-attention if the model is configured as a decoder. Mask values selected in ``[0, 1]``:
-
-            - 1 for tokens that are **not masked**,
-            - 0 for tokens that are **masked**.
+            the cross-attention if the model is configured as a decoder. Mask values selected in ``[0, 1]``: ``1`` for
+            tokens that are NOT MASKED, ``0`` for MASKED tokens.
         past_key_values (:obj:`tuple(tuple(torch.FloatTensor))` of length :obj:`config.n_layers` with each tuple having 4 tensors of shape :obj:`(batch_size, num_heads, sequence_length - 1, embed_size_per_head)`):
             Contains precomputed key and value hidden states of the attention blocks. Can be used to speed up decoding.
 
@@ -756,10 +740,9 @@ class RobertaModel(RobertaPreTrainedModel):
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
         )
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        use_cache = use_cache if use_cache is not None else self.config.use_cache
 
-        if self.config.is_decoder:
-            use_cache = use_cache if use_cache is not None else self.config.use_cache
-        else:
+        if not self.config.is_decoder:
             use_cache = False
 
         if input_ids is not None and inputs_embeds is not None:
@@ -844,7 +827,7 @@ class RobertaModel(RobertaPreTrainedModel):
     """RoBERTa Model with a `language modeling` head on top for CLM fine-tuning. """, ROBERTA_START_DOCSTRING
 )
 class RobertaForCausalLM(RobertaPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"position_ids", r"lm_head.decoder.bias"]
+    _keys_to_ignore_on_load_missing = [r"position_ids", r"predictions.decoder.bias"]
     _keys_to_ignore_on_load_unexpected = [r"pooler"]
 
     def __init__(self, config):
@@ -990,7 +973,7 @@ class RobertaForCausalLM(RobertaPreTrainedModel):
 
 @add_start_docstrings("""RoBERTa Model with a `language modeling` head on top. """, ROBERTA_START_DOCSTRING)
 class RobertaForMaskedLM(RobertaPreTrainedModel):
-    _keys_to_ignore_on_load_missing = [r"position_ids", r"lm_head.decoder.bias"]
+    _keys_to_ignore_on_load_missing = [r"position_ids", r"predictions.decoder.bias"]
     _keys_to_ignore_on_load_unexpected = [r"pooler"]
 
     def __init__(self, config):
@@ -1016,7 +999,7 @@ class RobertaForMaskedLM(RobertaPreTrainedModel):
     @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
         tokenizer_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
+        checkpoint="roberta-base",
         output_type=MaskedLMOutput,
         config_class=_CONFIG_FOR_DOC,
         mask="<mask>",
@@ -1117,7 +1100,6 @@ class RobertaForSequenceClassification(RobertaPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
-        self.config = config
 
         self.roberta = RobertaModel(config, add_pooling_layer=False)
         self.classifier = RobertaClassificationHead(config)
@@ -1127,7 +1109,7 @@ class RobertaForSequenceClassification(RobertaPreTrainedModel):
     @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
         tokenizer_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
+        checkpoint="roberta-base",
         output_type=SequenceClassifierOutput,
         config_class=_CONFIG_FOR_DOC,
     )
@@ -1168,26 +1150,13 @@ class RobertaForSequenceClassification(RobertaPreTrainedModel):
 
         loss = None
         if labels is not None:
-            if self.config.problem_type is None:
-                if self.num_labels == 1:
-                    self.config.problem_type = "regression"
-                elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
-                    self.config.problem_type = "single_label_classification"
-                else:
-                    self.config.problem_type = "multi_label_classification"
-
-            if self.config.problem_type == "regression":
+            if self.num_labels == 1:
+                #  We are doing regression
                 loss_fct = MSELoss()
-                if self.num_labels == 1:
-                    loss = loss_fct(logits.squeeze(), labels.squeeze())
-                else:
-                    loss = loss_fct(logits, labels)
-            elif self.config.problem_type == "single_label_classification":
+                loss = loss_fct(logits.view(-1), labels.view(-1))
+            else:
                 loss_fct = CrossEntropyLoss()
                 loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-            elif self.config.problem_type == "multi_label_classification":
-                loss_fct = BCEWithLogitsLoss()
-                loss = loss_fct(logits, labels)
 
         if not return_dict:
             output = (logits,) + outputs[2:]
@@ -1223,7 +1192,7 @@ class RobertaForMultipleChoice(RobertaPreTrainedModel):
     @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, num_choices, sequence_length"))
     @add_code_sample_docstrings(
         tokenizer_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
+        checkpoint="roberta-base",
         output_type=MultipleChoiceModelOutput,
         config_class=_CONFIG_FOR_DOC,
     )
@@ -1317,7 +1286,7 @@ class RobertaForTokenClassification(RobertaPreTrainedModel):
     @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
         tokenizer_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
+        checkpoint="roberta-base",
         output_type=TokenClassifierOutput,
         config_class=_CONFIG_FOR_DOC,
     )
@@ -1426,7 +1395,7 @@ class RobertaForQuestionAnswering(RobertaPreTrainedModel):
     @add_start_docstrings_to_model_forward(ROBERTA_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
         tokenizer_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
+        checkpoint="roberta-base",
         output_type=QuestionAnsweringModelOutput,
         config_class=_CONFIG_FOR_DOC,
     )
@@ -1472,8 +1441,8 @@ class RobertaForQuestionAnswering(RobertaPreTrainedModel):
 
         logits = self.qa_outputs(sequence_output)
         start_logits, end_logits = logits.split(1, dim=-1)
-        start_logits = start_logits.squeeze(-1).contiguous()
-        end_logits = end_logits.squeeze(-1).contiguous()
+        start_logits = start_logits.squeeze(-1)
+        end_logits = end_logits.squeeze(-1)
 
         total_loss = None
         if start_positions is not None and end_positions is not None:
@@ -1484,8 +1453,8 @@ class RobertaForQuestionAnswering(RobertaPreTrainedModel):
                 end_positions = end_positions.squeeze(-1)
             # sometimes the start/end positions are outside our model inputs, we ignore these terms
             ignored_index = start_logits.size(1)
-            start_positions = start_positions.clamp(0, ignored_index)
-            end_positions = end_positions.clamp(0, ignored_index)
+            start_positions.clamp_(0, ignored_index)
+            end_positions.clamp_(0, ignored_index)
 
             loss_fct = CrossEntropyLoss(ignore_index=ignored_index)
             start_loss = loss_fct(start_logits, start_positions)

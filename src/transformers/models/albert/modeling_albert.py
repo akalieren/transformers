@@ -20,8 +20,8 @@ from dataclasses import dataclass
 from typing import Optional, Tuple
 
 import torch
-from torch import nn
-from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
+import torch.nn as nn
+from torch.nn import CrossEntropyLoss, MSELoss
 
 from ...activations import ACT2FN
 from ...file_utils import (
@@ -52,7 +52,6 @@ from .configuration_albert import AlbertConfig
 
 logger = logging.get_logger(__name__)
 
-_CHECKPOINT_FOR_DOC = "albert-base-v2"
 _CONFIG_FOR_DOC = "AlbertConfig"
 _TOKENIZER_FOR_DOC = "AlbertTokenizer"
 
@@ -71,7 +70,7 @@ ALBERT_PRETRAINED_MODEL_ARCHIVE_LIST = [
 
 
 def load_tf_weights_in_albert(model, config, tf_checkpoint_path):
-    """Load tf checkpoints in a pytorch model."""
+    """ Load tf checkpoints in a pytorch model."""
     try:
         import re
 
@@ -84,13 +83,13 @@ def load_tf_weights_in_albert(model, config, tf_checkpoint_path):
         )
         raise
     tf_path = os.path.abspath(tf_checkpoint_path)
-    logger.info(f"Converting TensorFlow checkpoint from {tf_path}")
+    logger.info("Converting TensorFlow checkpoint from {}".format(tf_path))
     # Load weights from TF model
     init_vars = tf.train.list_variables(tf_path)
     names = []
     arrays = []
     for name, shape in init_vars:
-        logger.info(f"Loading TF weight {name} with shape {shape}")
+        logger.info("Loading TF weight {} with shape {}".format(name, shape))
         array = tf.train.load_variable(tf_path, name)
         names.append(name)
         arrays.append(array)
@@ -152,7 +151,7 @@ def load_tf_weights_in_albert(model, config, tf_checkpoint_path):
             or "AdamWeightDecayOptimizer_1" in name
             or "global_step" in name
         ):
-            logger.info(f"Skipping {'/'.join(name)}")
+            logger.info("Skipping {}".format("/".join(name)))
             continue
 
         pointer = model
@@ -174,7 +173,7 @@ def load_tf_weights_in_albert(model, config, tf_checkpoint_path):
                 try:
                     pointer = getattr(pointer, scope_names[0])
                 except AttributeError:
-                    logger.info(f"Skipping {'/'.join(name)}")
+                    logger.info("Skipping {}".format("/".join(name)))
                     continue
             if len(scope_names) >= 2:
                 num = int(scope_names[1])
@@ -191,7 +190,7 @@ def load_tf_weights_in_albert(model, config, tf_checkpoint_path):
         except AssertionError as e:
             e.args += (pointer.shape, array.shape)
             raise
-        print(f"Initialize PyTorch weight {name} from {original_name}")
+        print("Initialize PyTorch weight {} from {}".format(name, original_name))
         pointer.data = torch.from_numpy(array)
 
     return model
@@ -252,8 +251,8 @@ class AlbertAttention(nn.Module):
         super().__init__()
         if config.hidden_size % config.num_attention_heads != 0 and not hasattr(config, "embedding_size"):
             raise ValueError(
-                f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
-                f"heads ({config.num_attention_heads}"
+                "The hidden size (%d) is not a multiple of the number of attention "
+                "heads (%d)" % (config.hidden_size, config.num_attention_heads)
             )
 
         self.num_attention_heads = config.num_attention_heads
@@ -450,8 +449,6 @@ class AlbertTransformer(nn.Module):
         all_hidden_states = (hidden_states,) if output_hidden_states else None
         all_attentions = () if output_attentions else None
 
-        head_mask = [None] * self.config.num_hidden_layers if head_mask is None else head_mask
-
         for i in range(self.config.num_hidden_layers):
             # Number of layers in a hidden group
             layers_per_group = int(self.config.num_hidden_layers / self.config.num_hidden_groups)
@@ -493,16 +490,12 @@ class AlbertPreTrainedModel(PreTrainedModel):
 
     def _init_weights(self, module):
         """Initialize the weights."""
-        if isinstance(module, nn.Linear):
+        if isinstance(module, (nn.Linear, nn.Embedding)):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
             module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-            if module.bias is not None:
+            if isinstance(module, (nn.Linear)) and module.bias is not None:
                 module.bias.data.zero_()
-        elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-            if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
         elif isinstance(module, nn.LayerNorm):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
@@ -661,7 +654,7 @@ class AlbertModel(AlbertPreTrainedModel):
     @add_start_docstrings_to_model_forward(ALBERT_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
         tokenizer_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
+        checkpoint="albert-base-v2",
         output_type=BaseModelOutputWithPooling,
         config_class=_CONFIG_FOR_DOC,
     )
@@ -904,7 +897,7 @@ class AlbertForMaskedLM(AlbertPreTrainedModel):
     @add_start_docstrings_to_model_forward(ALBERT_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
         tokenizer_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
+        checkpoint="albert-base-v2",
         output_type=MaskedLMOutput,
         config_class=_CONFIG_FOR_DOC,
     )
@@ -972,7 +965,6 @@ class AlbertForSequenceClassification(AlbertPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.num_labels = config.num_labels
-        self.config = config
 
         self.albert = AlbertModel(config)
         self.dropout = nn.Dropout(config.classifier_dropout_prob)
@@ -983,7 +975,7 @@ class AlbertForSequenceClassification(AlbertPreTrainedModel):
     @add_start_docstrings_to_model_forward(ALBERT_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
         tokenizer_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
+        checkpoint="albert-base-v2",
         output_type=SequenceClassifierOutput,
         config_class=_CONFIG_FOR_DOC,
     )
@@ -1027,26 +1019,13 @@ class AlbertForSequenceClassification(AlbertPreTrainedModel):
 
         loss = None
         if labels is not None:
-            if self.config.problem_type is None:
-                if self.num_labels == 1:
-                    self.config.problem_type = "regression"
-                elif self.num_labels > 1 and (labels.dtype == torch.long or labels.dtype == torch.int):
-                    self.config.problem_type = "single_label_classification"
-                else:
-                    self.config.problem_type = "multi_label_classification"
-
-            if self.config.problem_type == "regression":
+            if self.num_labels == 1:
+                #  We are doing regression
                 loss_fct = MSELoss()
-                if self.num_labels == 1:
-                    loss = loss_fct(logits.squeeze(), labels.squeeze())
-                else:
-                    loss = loss_fct(logits, labels)
-            elif self.config.problem_type == "single_label_classification":
+                loss = loss_fct(logits.view(-1), labels.view(-1))
+            else:
                 loss_fct = CrossEntropyLoss()
                 loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-            elif self.config.problem_type == "multi_label_classification":
-                loss_fct = BCEWithLogitsLoss()
-                loss = loss_fct(logits, labels)
 
         if not return_dict:
             output = (logits,) + outputs[2:]
@@ -1084,7 +1063,7 @@ class AlbertForTokenClassification(AlbertPreTrainedModel):
     @add_start_docstrings_to_model_forward(ALBERT_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
         tokenizer_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
+        checkpoint="albert-base-v2",
         output_type=TokenClassifierOutput,
         config_class=_CONFIG_FOR_DOC,
     )
@@ -1172,7 +1151,7 @@ class AlbertForQuestionAnswering(AlbertPreTrainedModel):
     @add_start_docstrings_to_model_forward(ALBERT_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
         tokenizer_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
+        checkpoint="albert-base-v2",
         output_type=QuestionAnsweringModelOutput,
         config_class=_CONFIG_FOR_DOC,
     )
@@ -1218,8 +1197,8 @@ class AlbertForQuestionAnswering(AlbertPreTrainedModel):
 
         logits = self.qa_outputs(sequence_output)
         start_logits, end_logits = logits.split(1, dim=-1)
-        start_logits = start_logits.squeeze(-1).contiguous()
-        end_logits = end_logits.squeeze(-1).contiguous()
+        start_logits = start_logits.squeeze(-1)
+        end_logits = end_logits.squeeze(-1)
 
         total_loss = None
         if start_positions is not None and end_positions is not None:
@@ -1230,8 +1209,8 @@ class AlbertForQuestionAnswering(AlbertPreTrainedModel):
                 end_positions = end_positions.squeeze(-1)
             # sometimes the start/end positions are outside our model inputs, we ignore these terms
             ignored_index = start_logits.size(1)
-            start_positions = start_positions.clamp(0, ignored_index)
-            end_positions = end_positions.clamp(0, ignored_index)
+            start_positions.clamp_(0, ignored_index)
+            end_positions.clamp_(0, ignored_index)
 
             loss_fct = CrossEntropyLoss(ignore_index=ignored_index)
             start_loss = loss_fct(start_logits, start_positions)
@@ -1271,7 +1250,7 @@ class AlbertForMultipleChoice(AlbertPreTrainedModel):
     @add_start_docstrings_to_model_forward(ALBERT_INPUTS_DOCSTRING.format("batch_size, num_choices, sequence_length"))
     @add_code_sample_docstrings(
         tokenizer_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
+        checkpoint="albert-base-v2",
         output_type=MultipleChoiceModelOutput,
         config_class=_CONFIG_FOR_DOC,
     )

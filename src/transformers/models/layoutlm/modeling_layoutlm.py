@@ -18,7 +18,6 @@
 import math
 
 import torch
-import torch.utils.checkpoint
 from torch import nn
 from torch.nn import CrossEntropyLoss, MSELoss
 
@@ -52,7 +51,7 @@ LAYOUTLM_PRETRAINED_MODEL_ARCHIVE_LIST = [
 ]
 
 
-LayoutLMLayerNorm = nn.LayerNorm
+LayoutLMLayerNorm = torch.nn.LayerNorm
 
 
 class LayoutLMEmbeddings(nn.Module):
@@ -135,8 +134,8 @@ class LayoutLMSelfAttention(nn.Module):
         super().__init__()
         if config.hidden_size % config.num_attention_heads != 0 and not hasattr(config, "embedding_size"):
             raise ValueError(
-                f"The hidden size ({config.hidden_size}) is not a multiple of the number of attention "
-                f"heads ({config.num_attention_heads})"
+                "The hidden size (%d) is not a multiple of the number of attention "
+                "heads (%d)" % (config.hidden_size, config.num_attention_heads)
             )
 
         self.num_attention_heads = config.num_attention_heads
@@ -466,15 +465,7 @@ class LayoutLMEncoder(nn.Module):
 
             layer_head_mask = head_mask[i] if head_mask is not None else None
             past_key_value = past_key_values[i] if past_key_values is not None else None
-
-            if getattr(self.config, "gradient_checkpointing", False) and self.training:
-
-                if use_cache:
-                    logger.warning(
-                        "`use_cache=True` is incompatible with `config.gradient_checkpointing=True`. Setting "
-                        "`use_cache=False`..."
-                    )
-                    use_cache = False
+            if getattr(self.config, "gradient_checkpointing", False):
 
                 def create_custom_forward(module):
                     def custom_forward(*inputs):
@@ -611,20 +602,16 @@ class LayoutLMPreTrainedModel(PreTrainedModel):
     _keys_to_ignore_on_load_missing = [r"position_ids"]
 
     def _init_weights(self, module):
-        """Initialize the weights"""
-        if isinstance(module, nn.Linear):
+        """ Initialize the weights """
+        if isinstance(module, (nn.Linear, nn.Embedding)):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
             module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-            if module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-            if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
         elif isinstance(module, LayoutLMLayerNorm):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
+        if isinstance(module, nn.Linear) and module.bias is not None:
+            module.bias.data.zero_()
 
 
 LAYOUTLM_START_DOCSTRING = r"""

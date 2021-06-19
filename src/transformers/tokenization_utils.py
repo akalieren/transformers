@@ -16,13 +16,12 @@
  Tokenization classes for python tokenizers. For fast tokenizers (provided by HuggingFace's tokenizers library) see
  tokenization_utils_fast.py
 """
-import bisect
 import itertools
 import re
 import unicodedata
 from typing import Any, Dict, List, Optional, Tuple, Union, overload
 
-from .file_utils import PaddingStrategy, TensorType, add_end_docstrings
+from .file_utils import add_end_docstrings
 from .tokenization_utils_base import (
     ENCODE_KWARGS_DOCSTRING,
     ENCODE_PLUS_ADDITIONAL_KWARGS_DOCSTRING,
@@ -31,9 +30,11 @@ from .tokenization_utils_base import (
     BatchEncoding,
     EncodedInput,
     EncodedInputPair,
+    PaddingStrategy,
     PreTokenizedInput,
     PreTokenizedInputPair,
     PreTrainedTokenizerBase,
+    TensorType,
     TextInput,
     TextInputPair,
     TruncationStrategy,
@@ -100,20 +101,7 @@ def _is_start_of_word(text):
     return bool(_is_control(first_char) | _is_punctuation(first_char) | _is_whitespace(first_char))
 
 
-def _insert_one_token_to_ordered_list(token_list: List[str], new_token: str):
-    """
-    Inserts one token to an ordered list if it does not already exist. Note: token_list must be sorted.
-    """
-    insertion_idx = bisect.bisect_left(token_list, new_token)
-    # Checks if new_token is already in the ordered token_list
-    if insertion_idx < len(token_list) and token_list[insertion_idx] == new_token:
-        # new_token is in token_list, don't add
-        return
-    else:
-        token_list.insert(insertion_idx, new_token)
-
-
-@add_end_docstrings(INIT_TOKENIZER_DOCSTRING)
+@add_end_docstrings(INIT_TOKENIZER_DOCSTRING, """    .. automethod:: __call__""")
 class PreTrainedTokenizer(PreTrainedTokenizerBase):
     """
     Base class for all slow tokenizers.
@@ -135,8 +123,6 @@ class PreTrainedTokenizer(PreTrainedTokenizerBase):
         self.added_tokens_encoder: Dict[str, int] = {}
         self.added_tokens_decoder: Dict[int, str] = {}
         self.unique_no_split_tokens: List[str] = []
-
-        self._decode_use_source_tokenizer = False
 
     @property
     def is_fast(self) -> bool:
@@ -204,7 +190,7 @@ class PreTrainedTokenizer(PreTrainedTokenizerBase):
             ):
                 tokens_to_add.append(token)
                 if self.verbose:
-                    logger.info(f"Adding {token} to the vocabulary")
+                    logger.info("Adding %s to the vocabulary", token)
 
         added_tok_encoder = dict((tok, len(self) + i) for i, tok in enumerate(tokens_to_add))
         added_tok_decoder = {v: k for k, v in added_tok_encoder.items()}
@@ -213,16 +199,10 @@ class PreTrainedTokenizer(PreTrainedTokenizerBase):
 
         # Make sure we don't split on any special tokens (even they were already in the vocab before e.g. for Albert)
         if special_tokens:
-            if len(new_tokens) == 1:
-                _insert_one_token_to_ordered_list(self.unique_no_split_tokens, new_tokens[0])
-            else:
-                self.unique_no_split_tokens = sorted(set(self.unique_no_split_tokens).union(set(new_tokens)))
+            self.unique_no_split_tokens = sorted(set(self.unique_no_split_tokens).union(set(new_tokens)))
         else:
             # Or on the newly added tokens
-            if len(tokens_to_add) == 1:
-                _insert_one_token_to_ordered_list(self.unique_no_split_tokens, tokens_to_add[0])
-            else:
-                self.unique_no_split_tokens = sorted(set(self.unique_no_split_tokens).union(set(tokens_to_add)))
+            self.unique_no_split_tokens = sorted(set(self.unique_no_split_tokens).union(set(tokens_to_add)))
 
         return len(tokens_to_add)
 
@@ -249,6 +229,9 @@ class PreTrainedTokenizer(PreTrainedTokenizerBase):
     def tokenize(self, text: TextInput, **kwargs) -> List[str]:
         """
         Converts a string in a sequence of tokens, using the tokenizer.
+
+        Note that, unlike Fast tokenizers (instances of PreTrainedTokenizerFast), this method won't replace the unknown
+        tokens with the `unk_token` yet (this is done in the `encode()` method)
 
         Split in words for word-based vocabulary or sub-words for sub-word-based vocabularies
         (BPE/SentencePieces/WordPieces). Takes care of added tokens.
@@ -643,9 +626,7 @@ class PreTrainedTokenizer(PreTrainedTokenizerBase):
             text (:obj:`str`):
                 The text to prepare.
             is_split_into_words (:obj:`bool`, `optional`, defaults to :obj:`False`):
-                Whether or not the input is already pre-tokenized (e.g., split into words). If set to :obj:`True`, the
-                tokenizer assumes the input is already split into words (for instance, by splitting it on whitespace)
-                which it will tokenize. This is useful for NER or token classification.
+                Whether or not the text has been pretokenized.
             kwargs:
                 Keyword arguments to use for the tokenization.
 
@@ -672,16 +653,6 @@ class PreTrainedTokenizer(PreTrainedTokenizerBase):
         Returns:
             A list of integers in the range [0, 1]: 1 for a special token, 0 for a sequence token.
         """
-        if already_has_special_tokens:
-            if token_ids_1 is not None:
-                raise ValueError(
-                    "You should not supply a second sequence if the provided sequence of "
-                    "ids is already formatted with special tokens for the model."
-                )
-
-            return super().get_special_tokens_mask(
-                token_ids_0=token_ids_0, token_ids_1=token_ids_1, already_has_special_tokens=True
-            )
         return [0] * ((len(token_ids_1) if token_ids_1 else 0) + len(token_ids_0))
 
     @overload
@@ -736,10 +707,7 @@ class PreTrainedTokenizer(PreTrainedTokenizerBase):
         skip_special_tokens: bool = False,
         clean_up_tokenization_spaces: bool = True,
         spaces_between_special_tokens: bool = True,
-        **kwargs
     ) -> str:
-        self._decode_use_source_tokenizer = kwargs.pop("use_source_tokenizer", False)
-
         filtered_tokens = self.convert_ids_to_tokens(token_ids, skip_special_tokens=skip_special_tokens)
 
         # To avoid mixing byte-level and unicode for byte-level BPT

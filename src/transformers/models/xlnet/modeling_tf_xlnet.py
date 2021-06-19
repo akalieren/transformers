@@ -52,7 +52,6 @@ from .configuration_xlnet import XLNetConfig
 
 logger = logging.get_logger(__name__)
 
-_CHECKPOINT_FOR_DOC = "xlnet-base-cased"
 _CONFIG_FOR_DOC = "XLNetConfig"
 _TOKENIZER_FOR_DOC = "XLNetTokenizer"
 
@@ -69,8 +68,8 @@ class TFXLNetRelativeAttention(tf.keras.layers.Layer):
 
         if config.d_model % config.n_head != 0:
             raise ValueError(
-                f"The hidden size ({config.d_model}) is not a multiple of the number of attention "
-                f"heads ({config.n_head}"
+                "The hidden size (%d) is not a multiple of the number of attention "
+                "heads (%d)" % (config.d_model, config.n_head)
             )
 
         self.n_head = config.n_head
@@ -151,7 +150,7 @@ class TFXLNetRelativeAttention(tf.keras.layers.Layer):
         attn_score = (ac + bd + ef) * self.scale
         if attn_mask is not None:
             # attn_score = attn_score * (1 - attn_mask) - 1e30 * attn_mask
-            if attn_mask.dtype == tf.float16 or attn_mask.dtype == tf.bfloat16:
+            if attn_mask.dtype == tf.float16:
                 attn_score = attn_score - 65500 * attn_mask
             else:
                 attn_score = attn_score - 1e30 * attn_mask
@@ -455,7 +454,7 @@ class TFXLNetMainLayer(tf.keras.layers.Layer):
         self.word_embedding = TFSharedEmbeddings(
             config.vocab_size, config.d_model, initializer_range=config.initializer_range, name="word_embedding"
         )
-        self.layer = [TFXLNetLayer(config, name=f"layer_._{i}") for i in range(config.n_layer)]
+        self.layer = [TFXLNetLayer(config, name="layer_._{}".format(i)) for i in range(config.n_layer)]
         self.dropout = tf.keras.layers.Dropout(config.dropout)
 
         self.use_mems_eval = config.use_mems_eval
@@ -477,7 +476,7 @@ class TFXLNetMainLayer(tf.keras.layers.Layer):
     def _prune_heads(self, heads_to_prune):
         raise NotImplementedError
 
-    def create_mask(self, qlen, mlen):
+    def create_mask(self, qlen, mlen, dtype=tf.float32):
         """
         Creates causal attention mask. Float mask where 1.0 indicates masked, 0.0 indicates not-masked.
 
@@ -496,10 +495,10 @@ class TFXLNetMainLayer(tf.keras.layers.Layer):
                v [0 0 0 0 0 0 0 0 0]     [1 1 1 1 0 0 0 0 0]
 
         """
-        attn_mask = tf.ones([qlen, qlen])
+        attn_mask = tf.ones([qlen, qlen], dtype=dtype)
         mask_u = tf.matrix_band_part(attn_mask, 0, -1)
         mask_dia = tf.matrix_band_part(attn_mask, 0, 0)
-        attn_mask_pad = tf.zeros([qlen, mlen])
+        attn_mask_pad = tf.zeros([qlen, mlen], dtype=dtype)
         ret = tf.concat([attn_mask_pad, mask_u - mask_dia], 1)
         if self.same_length:
             mask_l = tf.matrix_band_part(attn_mask, -1, 0)
@@ -538,9 +537,11 @@ class TFXLNetMainLayer(tf.keras.layers.Layer):
 
         return pos_emb
 
-    def relative_positional_encoding(self, qlen, klen, bsz=None):
+    def relative_positional_encoding(self, qlen, klen, bsz=None, dtype=None):
         """create relative positional encoding."""
         freq_seq = tf.range(0, self.d_model, 2.0)
+        if dtype is not None and dtype != tf.float32:
+            freq_seq = tf.cast(freq_seq, dtype=dtype)
         inv_freq = 1 / (10000 ** (freq_seq / self.d_model))
 
         if self.attn_type == "bi":
@@ -550,11 +551,15 @@ class TFXLNetMainLayer(tf.keras.layers.Layer):
             # beg, end = klen - 1, -1
             beg, end = klen, -1
         else:
-            raise ValueError(f"Unknown `attn_type` {self.attn_type}.")
+            raise ValueError("Unknown `attn_type` {}.".format(self.attn_type))
 
         if self.bi_data:
             fwd_pos_seq = tf.range(beg, end, -1.0)
             bwd_pos_seq = tf.range(-beg, -end, 1.0)
+
+            if dtype is not None and dtype != tf.float32:
+                fwd_pos_seq = tf.cast(fwd_pos_seq, dtype=dtype)
+                bwd_pos_seq = tf.cast(bwd_pos_seq, dtype=dtype)
 
             if self.clamp_len > 0:
                 fwd_pos_seq = tf.clip_by_value(fwd_pos_seq, -self.clamp_len, self.clamp_len)
@@ -571,6 +576,8 @@ class TFXLNetMainLayer(tf.keras.layers.Layer):
             pos_emb = tf.concat([fwd_pos_emb, bwd_pos_emb], axis=1)
         else:
             fwd_pos_seq = tf.range(beg, end, -1.0)
+            if dtype is not None and dtype != tf.float32:
+                fwd_pos_seq = tf.cast(fwd_pos_seq, dtype=dtype)
             if self.clamp_len > 0:
                 fwd_pos_seq = tf.clip_by_value(fwd_pos_seq, -self.clamp_len, self.clamp_len)
             pos_emb = self.positional_embedding(fwd_pos_seq, inv_freq, bsz)
@@ -654,6 +661,8 @@ class TFXLNetMainLayer(tf.keras.layers.Layer):
         mlen = shape_list(inputs["mems"][0])[0] if inputs["mems"] is not None and inputs["mems"][0] is not None else 0
         klen = mlen + qlen
 
+        dtype_float = tf.bfloat16 if self.use_bfloat16 else tf.float32
+
         # Attention mask
         # causal attention mask
         if self.attn_type == "uni":
@@ -662,7 +671,7 @@ class TFXLNetMainLayer(tf.keras.layers.Layer):
         elif self.attn_type == "bi":
             attn_mask = None
         else:
-            raise ValueError(f"Unsupported attention type: {self.attn_type}")
+            raise ValueError("Unsupported attention type: {}".format(self.attn_type))
 
         # data mask: input mask & perm mask
         assert inputs["input_mask"] is None or inputs["attention_mask"] is None, (
@@ -670,8 +679,7 @@ class TFXLNetMainLayer(tf.keras.layers.Layer):
             "or attention_mask (uses 0 for padding, added for compatibility with BERT). Please choose one."
         )
         if inputs["input_mask"] is None and inputs["attention_mask"] is not None:
-            one_cst = tf.constant(1.0)
-            inputs["input_mask"] = 1.0 - tf.cast(inputs["attention_mask"], dtype=one_cst.dtype)
+            inputs["input_mask"] = 1.0 - tf.cast(inputs["attention_mask"], dtype=dtype_float)
         if inputs["input_mask"] is not None and inputs["perm_mask"] is not None:
             data_mask = inputs["input_mask"][None] + inputs["perm_mask"]
         elif inputs["input_mask"] is not None and inputs["perm_mask"] is None:
@@ -684,7 +692,7 @@ class TFXLNetMainLayer(tf.keras.layers.Layer):
         if data_mask is not None:
             # all mems can be attended to
             if mlen > 0:
-                mems_mask = tf.zeros([shape_list(data_mask)[0], mlen, bsz])
+                mems_mask = tf.zeros([shape_list(data_mask)[0], mlen, bsz], dtype=dtype_float)
                 data_mask = tf.concat([mems_mask, data_mask], axis=1)
             if attn_mask is None:
                 attn_mask = data_mask[:, :, :, None]
@@ -692,13 +700,13 @@ class TFXLNetMainLayer(tf.keras.layers.Layer):
                 attn_mask += data_mask[:, :, :, None]
 
         if attn_mask is not None:
-            attn_mask = tf.cast(attn_mask > 0, dtype=attn_mask.dtype)
+            attn_mask = tf.cast(attn_mask > 0, dtype=dtype_float)
 
         if attn_mask is not None:
-            non_tgt_mask = -tf.eye(qlen)
+            non_tgt_mask = -tf.eye(qlen, dtype=dtype_float)
             if mlen > 0:
-                non_tgt_mask = tf.concat([tf.zeros([qlen, mlen]), non_tgt_mask], axis=-1)
-            non_tgt_mask = tf.cast((attn_mask + non_tgt_mask[:, :, None, None]) > 0, dtype=non_tgt_mask.dtype)
+                non_tgt_mask = tf.concat([tf.zeros([qlen, mlen], dtype=dtype_float), non_tgt_mask], axis=-1)
+            non_tgt_mask = tf.cast((attn_mask + non_tgt_mask[:, :, None, None]) > 0, dtype=dtype_float)
         else:
             non_tgt_mask = None
 
@@ -721,22 +729,19 @@ class TFXLNetMainLayer(tf.keras.layers.Layer):
         if inputs["token_type_ids"] is not None:
             # Convert `token_type_ids` to one-hot `seg_mat`
             if mlen > 0:
-                mem_pad = tf.zeros([mlen, bsz], dtype=inputs["token_type_ids"].dtype)
+                mem_pad = tf.zeros([mlen, bsz], dtype=tf.int32)
                 cat_ids = tf.concat([mem_pad, inputs["token_type_ids"]], 0)
             else:
                 cat_ids = inputs["token_type_ids"]
 
             # `1` indicates not in the same segment [qlen x klen x bsz]
-            seg_mat = tf.cast(
-                tf.logical_not(tf.equal(inputs["token_type_ids"][:, None], cat_ids[None, :])),
-                dtype=inputs["token_type_ids"].dtype,
-            )
-            seg_mat = tf.one_hot(seg_mat, 2)
+            seg_mat = tf.cast(tf.logical_not(tf.equal(inputs["token_type_ids"][:, None], cat_ids[None, :])), tf.int32)
+            seg_mat = tf.one_hot(seg_mat, 2, dtype=dtype_float)
         else:
             seg_mat = None
 
         # Positional encoding
-        pos_emb = self.relative_positional_encoding(qlen, klen, bsz=bsz)
+        pos_emb = self.relative_positional_encoding(qlen, klen, bsz=bsz, dtype=dtype_float)
         pos_emb = self.dropout(pos_emb, training=inputs["training"])
 
         # Prepare head mask if needed
@@ -1113,7 +1118,7 @@ XLNET_INPUTS_DOCSTRING = r"""
             Mask values selected in ``[0, 1]``:
 
             - 1 for tokens that are **masked**,
-            - 0 for tokens that are **not masked**.
+            - 0 for tokens that are **not maked**.
 
             You can only uses one of :obj:`input_mask` and :obj:`attention_mask`.
         head_mask (:obj:`Numpy array` or :obj:`tf.Tensor` of shape :obj:`(num_heads,)` or :obj:`(num_layers, num_heads)`, `optional`):
@@ -1128,15 +1133,12 @@ XLNET_INPUTS_DOCSTRING = r"""
             vectors than the model's internal embedding lookup matrix.
         output_attentions (:obj:`bool`, `optional`):
             Whether or not to return the attentions tensors of all attention layers. See ``attentions`` under returned
-            tensors for more detail. This argument can be used only in eager mode, in graph mode the value in the
-            config will be used instead.
+            tensors for more detail.
         output_hidden_states (:obj:`bool`, `optional`):
             Whether or not to return the hidden states of all layers. See ``hidden_states`` under returned tensors for
-            more detail. This argument can be used only in eager mode, in graph mode the value in the config will be
-            used instead.
+            more detail.
         return_dict (:obj:`bool`, `optional`):
-            Whether or not to return a :class:`~transformers.file_utils.ModelOutput` instead of a plain tuple. This
-            argument can be used in eager mode, in graph mode the value will always be set to True.
+            Whether or not to return a :class:`~transformers.file_utils.ModelOutput` instead of a plain tuple.
         training (:obj:`bool`, `optional`, defaults to :obj:`False`):
             Whether or not to use the model in training mode (some modules like dropout modules have different
             behaviors between training and evaluation).
@@ -1155,7 +1157,7 @@ class TFXLNetModel(TFXLNetPreTrainedModel):
     @add_start_docstrings_to_model_forward(XLNET_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
         tokenizer_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
+        checkpoint="xlnet-base-cased",
         output_type=TFXLNetModelOutput,
         config_class=_CONFIG_FOR_DOC,
     )
@@ -1253,7 +1255,7 @@ class TFXLNetLMHeadModel(TFXLNetPreTrainedModel, TFCausalLanguageModelingLoss):
         offset = 2
 
         effective_batch_size = inputs.shape[0]
-        dummy_token = tf.zeros((effective_batch_size, 1), dtype=inputs.dtype)
+        dummy_token = tf.zeros((effective_batch_size, 1), dtype=tf.int32)
 
         if past:
             inputs = tf.concat([inputs[:, -offset:], dummy_token], axis=1)
@@ -1262,13 +1264,13 @@ class TFXLNetLMHeadModel(TFXLNetPreTrainedModel, TFCausalLanguageModelingLoss):
 
         # Build permutation mask so that previous tokens don't see last token
         sequence_length = inputs.shape[1]
-        perm_mask = tf.zeros((effective_batch_size, sequence_length, sequence_length - 1))
-        perm_mask_seq_end = tf.ones((effective_batch_size, sequence_length, 1))
+        perm_mask = tf.zeros((effective_batch_size, sequence_length, sequence_length - 1), dtype=tf.float32)
+        perm_mask_seq_end = tf.ones((effective_batch_size, sequence_length, 1), dtype=tf.float32)
         perm_mask = tf.concat([perm_mask, perm_mask_seq_end], axis=-1)
 
         # We'll only predict the last token
-        target_mapping = tf.zeros((effective_batch_size, 1, sequence_length - 1))
-        target_mapping_seq_end = tf.ones((effective_batch_size, 1, 1))
+        target_mapping = tf.zeros((effective_batch_size, 1, sequence_length - 1), dtype=tf.float32)
+        target_mapping_seq_end = tf.ones((effective_batch_size, 1, 1), dtype=tf.float32)
         target_mapping = tf.concat([target_mapping, target_mapping_seq_end], axis=-1)
 
         inputs = {
@@ -1424,7 +1426,7 @@ class TFXLNetForSequenceClassification(TFXLNetPreTrainedModel, TFSequenceClassif
     @add_start_docstrings_to_model_forward(XLNET_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
         tokenizer_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
+        checkpoint="xlnet-base-cased",
         output_type=TFXLNetForSequenceClassificationOutput,
         config_class=_CONFIG_FOR_DOC,
     )
@@ -1550,7 +1552,7 @@ class TFXLNetForMultipleChoice(TFXLNetPreTrainedModel, TFMultipleChoiceLoss):
     @add_start_docstrings_to_model_forward(XLNET_INPUTS_DOCSTRING.format("batch_size, num_choices, sequence_length"))
     @add_code_sample_docstrings(
         tokenizer_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
+        checkpoint="xlnet-base-cased",
         output_type=TFXLNetForMultipleChoiceOutput,
         config_class=_CONFIG_FOR_DOC,
     )
@@ -1699,7 +1701,7 @@ class TFXLNetForTokenClassification(TFXLNetPreTrainedModel, TFTokenClassificatio
     @add_start_docstrings_to_model_forward(XLNET_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
         tokenizer_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
+        checkpoint="xlnet-base-cased",
         output_type=TFXLNetForTokenClassificationOutput,
         config_class=_CONFIG_FOR_DOC,
     )
@@ -1806,7 +1808,7 @@ class TFXLNetForQuestionAnsweringSimple(TFXLNetPreTrainedModel, TFQuestionAnswer
     @add_start_docstrings_to_model_forward(XLNET_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
         tokenizer_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
+        checkpoint="xlnet-base-cased",
         output_type=TFXLNetForQuestionAnsweringSimpleOutput,
         config_class=_CONFIG_FOR_DOC,
     )

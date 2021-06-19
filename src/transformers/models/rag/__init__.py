@@ -18,7 +18,7 @@
 
 from typing import TYPE_CHECKING
 
-from ...file_utils import _BaseLazyModule, is_tf_available, is_torch_available
+from ...file_utils import _BaseLazyModule, is_torch_available
 
 
 _import_structure = {
@@ -30,9 +30,6 @@ _import_structure = {
 if is_torch_available():
     _import_structure["modeling_rag"] = ["RagModel", "RagSequenceForGeneration", "RagTokenForGeneration"]
 
-if is_tf_available():
-    _import_structure["modeling_tf_rag"] = ["TFRagModel", "TFRagSequenceForGeneration", "TFRagTokenForGeneration"]
-
 
 if TYPE_CHECKING:
     from .configuration_rag import RagConfig
@@ -41,9 +38,6 @@ if TYPE_CHECKING:
 
     if is_torch_available():
         from .modeling_rag import RagModel, RagSequenceForGeneration, RagTokenForGeneration
-
-    if is_tf_available():
-        from .modeling_tf_rag import TFRagModel, TFRagSequenceForGeneration, TFRagTokenForGeneration
 
 else:
     import importlib

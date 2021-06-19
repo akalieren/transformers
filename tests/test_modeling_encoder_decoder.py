@@ -20,7 +20,6 @@ import unittest
 from transformers import is_torch_available
 from transformers.testing_utils import require_torch, slow, torch_device
 
-from .test_modeling_bart import BartStandaloneDecoderModelTester
 from .test_modeling_bert import BertModelTester
 from .test_modeling_bert_generation import BertGenerationEncoderTester
 from .test_modeling_common import ids_tensor
@@ -34,9 +33,7 @@ if is_torch_available():
     import torch
 
     from transformers import (
-        AutoConfig,
         AutoTokenizer,
-        BartForCausalLM,
         BertGenerationDecoder,
         BertGenerationEncoder,
         BertLMHeadModel,
@@ -831,92 +828,3 @@ class ProphetNetEncoderDecoderModelTest(EncoderDecoderMixin, unittest.TestCase):
 
     def test_encoder_decoder_model_shared_weights(self):
         pass
-
-
-@require_torch
-class BartEncoderDecoderModelTest(EncoderDecoderMixin, unittest.TestCase):
-    def get_encoder_decoder_model(self, config, decoder_config):
-        encoder_model = BertModel(config)
-        decoder_model = BartForCausalLM(decoder_config)
-        return encoder_model, decoder_model
-
-    def prepare_config_and_inputs(self):
-        model_tester_encoder = BertModelTester(self, batch_size=13)
-        model_tester_decoder = BartStandaloneDecoderModelTester(
-            self, batch_size=13, d_model=32, max_position_embeddings=512
-        )
-        encoder_config_and_inputs = model_tester_encoder.prepare_config_and_inputs()
-        decoder_config_and_inputs = model_tester_decoder.prepare_config_and_inputs_for_decoder()
-        (
-            config,
-            input_ids,
-            token_type_ids,
-            input_mask,
-            sequence_labels,
-            token_labels,
-            choice_labels,
-        ) = encoder_config_and_inputs
-        (
-            decoder_config,
-            decoder_input_ids,
-            decoder_attention_mask,
-            encoder_hidden_states,
-            encoder_attention_mask,
-            lm_labels,
-        ) = decoder_config_and_inputs
-
-        # make sure that cross attention layers are added
-        decoder_config.add_cross_attention = True
-        #  disable cache for now
-        decoder_config.use_cache = False
-        return {
-            "config": config,
-            "input_ids": input_ids,
-            "attention_mask": input_mask,
-            "decoder_config": decoder_config,
-            "decoder_input_ids": decoder_input_ids,
-            "decoder_attention_mask": decoder_attention_mask,
-            "encoder_hidden_states": encoder_hidden_states,
-            "labels": lm_labels,
-        }
-
-    def get_pretrained_model(self):
-        return EncoderDecoderModel.from_encoder_decoder_pretrained("bert-large-uncased", "facebook/bart-large")
-
-    def test_encoder_decoder_model_shared_weights(self):
-        pass
-
-
-@require_torch
-class EncoderDecoderModelTest(unittest.TestCase):
-    def get_from_encoderdecoder_pretrained_model(self):
-        return EncoderDecoderModel.from_encoder_decoder_pretrained("bert-base-uncased", "bert-base-uncased")
-
-    def get_decoder_config(self):
-        config = AutoConfig.from_pretrained("bert-base-uncased")
-        config.is_decoder = True
-        config.add_cross_attention = True
-        return config
-
-    def get_encoderdecoder_model(self):
-        return EncoderDecoderModel.from_pretrained("patrickvonplaten/bert2bert-cnn_dailymail-fp16")
-
-    def get_encoder_decoder_models(self):
-        encoder_model = BertModel.from_pretrained("bert-base-uncased")
-        decoder_model = BertLMHeadModel.from_pretrained("bert-base-uncased", config=self.get_decoder_config())
-        return {"encoder": encoder_model, "decoder": decoder_model}
-
-    def _check_configuration_tie(self, model):
-        assert id(model.decoder.config) == id(model.config.decoder)
-        assert id(model.encoder.config) == id(model.config.encoder)
-
-    @slow
-    def test_configuration_tie(self):
-        model = self.get_from_encoderdecoder_pretrained_model()
-        self._check_configuration_tie(model)
-
-        model = EncoderDecoderModel(**self.get_encoder_decoder_models())
-        self._check_configuration_tie(model)
-
-        model = self.get_encoderdecoder_model()
-        self._check_configuration_tie(model)

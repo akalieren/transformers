@@ -35,7 +35,6 @@ from .configuration_bert_generation import BertGenerationConfig
 
 logger = logging.get_logger(__name__)
 
-_CHECKPOINT_FOR_DOC = "google/bert_for_seq_generation_L-24_bbc_encoder"
 _CONFIG_FOR_DOC = "BertGenerationConfig"
 _TOKENIZER_FOR_DOC = "BertGenerationTokenizer"
 
@@ -109,7 +108,7 @@ def load_tf_weights_in_bert_generation(
 
             array = np.asarray(sess.run(all_variables[key]))
             if not is_embedding:
-                logger.info(f"Transposing numpy weight of shape {array.shape} for {key}")
+                logger.info("Transposing numpy weight of shape {} for {}".format(array.shape, key))
                 array = np.transpose(array)
             else:
                 model_pointer = model_pointer.weight
@@ -126,7 +125,7 @@ def load_tf_weights_in_bert_generation(
             model_pointer.data = torch.from_numpy(array.astype(np.float32))
             keep_track_variables.pop(key, None)
 
-        logger.info(f"Weights not copied to PyTorch model: {', '.join(keep_track_variables.keys())}")
+        logger.info("Weights not copied to PyTorch model: {}".format(", ".join(keep_track_variables.keys())))
         return model
 
 
@@ -139,7 +138,7 @@ class BertGenerationEmbeddings(nn.Module):
         self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
         # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
         # any TensorFlow checkpoint file
-        self.LayerNorm = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
+        self.LayerNorm = torch.nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
         # position_ids (1, len position emb) is contiguous in memory and exported when serialized
@@ -177,20 +176,16 @@ class BertGenerationPreTrainedModel(PreTrainedModel):
     _keys_to_ignore_on_load_missing = [r"position_ids"]
 
     def _init_weights(self, module):
-        """Initialize the weights"""
-        if isinstance(module, nn.Linear):
+        """ Initialize the weights """
+        if isinstance(module, (nn.Linear, nn.Embedding)):
             # Slightly different from the TF version which uses truncated_normal for initialization
             # cf https://github.com/pytorch/pytorch/pull/5617
             module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-            if module.bias is not None:
-                module.bias.data.zero_()
-        elif isinstance(module, nn.Embedding):
-            module.weight.data.normal_(mean=0.0, std=self.config.initializer_range)
-            if module.padding_idx is not None:
-                module.weight.data[module.padding_idx].zero_()
         elif isinstance(module, nn.LayerNorm):
             module.bias.data.zero_()
             module.weight.data.fill_(1.0)
+        if isinstance(module, nn.Linear) and module.bias is not None:
+            module.bias.data.zero_()
 
 
 BERT_GENERATION_START_DOCSTRING = r"""
@@ -301,7 +296,7 @@ class BertGenerationEncoder(BertGenerationPreTrainedModel):
     @add_start_docstrings_to_model_forward(BERT_GENERATION_INPUTS_DOCSTRING.format("batch_size, sequence_length"))
     @add_code_sample_docstrings(
         tokenizer_class=_TOKENIZER_FOR_DOC,
-        checkpoint=_CHECKPOINT_FOR_DOC,
+        checkpoint="google/bert_for_seq_generation_L-24_bbc_encoder",
         output_type=BaseModelOutputWithPastAndCrossAttentions,
         config_class=_CONFIG_FOR_DOC,
     )
@@ -450,7 +445,7 @@ class BertGenerationDecoder(BertGenerationPreTrainedModel):
         super().__init__(config)
 
         if not config.is_decoder:
-            logger.warning("If you want to use `BertGenerationDecoder` as a standalone, add `is_decoder=True.`")
+            logger.warn("If you want to use `BertGenerationDecoder` as a standalone, add `is_decoder=True.`")
 
         self.bert = BertGenerationEncoder(config)
         self.lm_head = BertGenerationOnlyLMHead(config)
