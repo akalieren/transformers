@@ -26,8 +26,11 @@ import os
 import sys
 from dataclasses import dataclass, field
 from typing import Optional
-
+from torch.utils.data import IterableDataset, DataLoader
+from itertools import cycle, islice
 from datasets import load_dataset
+import tensorflow as tf
+tf.enable_eager_execution() # call only first execution
 
 import transformers
 from transformers import (
@@ -35,6 +38,7 @@ from transformers import (
     MODEL_FOR_MASKED_LM_MAPPING,
     AutoConfig,
     AutoModelForMaskedLM,
+    RobertaTokenizerFast,
     AutoTokenizer,
     DataCollatorForLanguageModeling,
     HfArgumentParser,
@@ -103,6 +107,11 @@ class DataTrainingArguments:
     dataset_name: Optional[str] = field(
         default=None, metadata={"help": "The name of the dataset to use (via the datasets library)."}
     )
+    
+    tfrecords_path: Optional[str] = field(
+        default=None, metadata={"help": "The bucket path of the dataset to use (via the Tenforflow API)."}
+    )    
+        
     dataset_config_name: Optional[str] = field(
         default=None, metadata={"help": "The configuration name of the dataset to use (via the datasets library)."}
     )
@@ -145,9 +154,18 @@ class DataTrainingArguments:
             "If False, will pad the samples dynamically when batching to the maximum length in the batch."
         },
     )
+        
+    cloud_credentials: str = field(
+        default=None,
+        metadata={
+            "help": "To authenticate Google Cloud Credentials"
+        },
+    )
+        
+        
 
     def __post_init__(self):
-        if self.dataset_name is None and self.train_file is None and self.validation_file is None:
+        if self.dataset_name is None and self.train_file is None and self.validation_file is None and self.tfrecords_path is None:
             raise ValueError("Need either a dataset name or a training/validation file.")
         else:
             if self.train_file is not None:
@@ -157,12 +175,62 @@ class DataTrainingArguments:
                 extension = self.validation_file.split(".")[-1]
                 assert extension in ["csv", "json", "txt"], "`validation_file` should be a csv, a json or a txt file."
 
+class RawTextDataset(IterableDataset):
+    """dataset class to read from tfrecord to torch class"""
+
+    def __init__(self, tfrecord):
+        """
+        Args:
+            tfrecord (string): Path to the tfrecord.
+        """
+        def parse_record(data_record):
+
+            features = {
+                'input_ids': tf.FixedLenFeature(512, tf.int64),
+                'attention_mask': tf.FixedLenFeature(512, tf.int64),
+                'text': tf.FixedLenFeature([], tf.string)
+            }
+
+            sample = tf.parse_single_example(data_record, features)
+
+            return sample
+        
+        input_files = []
+        for input_pattern in tfrecord.split(","):
+            input_files.extend(tf.gfile.Glob(input_pattern))
+
+        tf.logging.info("*** Input Files ***")
+        for input_file in input_files:
+            tf.logging.info("  %s" % input_file)
+            
+        dataset = tf.data.TFRecordDataset([input_files])
+        dataset = dataset.map(parse_record)
+        self.dataset = dataset.make_one_shot_iterator()
+
+    def transform(self, sample):
+        return {
+                #"text": sample['text'].numpy().decode(),
+                "attention_mask": sample['attention_mask'].numpy(),
+                "input_ids": sample['input_ids'].numpy(),
+            }
+
+    def get_samples(self, dataset):
+        yield from dataset
+
+
+    def get_stream(self, dataset):
+        return cycle(self.get_samples(dataset))
+
+
+    def __iter__(self):
+        return map(self.transform, self.get_stream(self.dataset))
+
 
 def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
-
+    
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, TrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
@@ -203,7 +271,8 @@ def main():
 
     # Set seed before initializing model.
     set_seed(training_args.seed)
-
+    
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = data_args.cloud_credentials
     # Get the datasets: you can either provide your own CSV/JSON/TXT training and evaluation files (see below)
     # or just provide the name of one of the public datasets available on the hub at https://huggingface.co/datasets/
     # (the dataset will be downloaded automatically from the datasets Hub
@@ -213,30 +282,6 @@ def main():
     #
     # In distributed training, the load_dataset function guarantee that only one local process can concurrently
     # download the dataset.
-    if data_args.dataset_name is not None:
-        # Downloading and loading a dataset from the hub.
-        datasets = load_dataset(data_args.dataset_name, data_args.dataset_config_name)
-        if "validation" not in datasets.keys():
-            datasets["validation"] = load_dataset(
-                data_args.dataset_name,
-                data_args.dataset_config_name,
-                split=f"train[:{data_args.validation_split_percentage}%]",
-            )
-            datasets["train"] = load_dataset(
-                data_args.dataset_name,
-                data_args.dataset_config_name,
-                split=f"train[{data_args.validation_split_percentage}%:]",
-            )
-    else:
-        data_files = {}
-        if data_args.train_file is not None:
-            data_files["train"] = data_args.train_file
-        if data_args.validation_file is not None:
-            data_files["validation"] = data_args.validation_file
-        extension = data_args.train_file.split(".")[-1]
-        if extension == "txt":
-            extension = "text"
-        datasets = load_dataset(extension, data_files=data_files)
     # See more about loading any type of standard or custom dataset (from files, python dict, pandas DataFrame, etc) at
     # https://huggingface.co/docs/datasets/loading_datasets.html.
 
@@ -264,10 +309,11 @@ def main():
         "revision": model_args.model_revision,
         "use_auth_token": True if model_args.use_auth_token else None,
     }
+    
     if model_args.tokenizer_name:
-        tokenizer = AutoTokenizer.from_pretrained(model_args.tokenizer_name, **tokenizer_kwargs)
+        tokenizer = RobertaTokenizerFast.from_pretrained(model_args.tokenizer_name, **tokenizer_kwargs)
     elif model_args.model_name_or_path:
-        tokenizer = AutoTokenizer.from_pretrained(model_args.model_name_or_path, **tokenizer_kwargs)
+        tokenizer = RobertaTokenizerFast.from_pretrained(model_args.model_name_or_path, **tokenizer_kwargs)
     else:
         raise ValueError(
             "You are instantiating a new tokenizer from scratch. This is not supported by this script."
@@ -288,113 +334,18 @@ def main():
         model = AutoModelForMaskedLM.from_config(config)
 
     model.resize_token_embeddings(len(tokenizer))
-
-    # Preprocessing the datasets.
-    # First we tokenize all the texts.
-    if training_args.do_train:
-        column_names = datasets["train"].column_names
-        print("training_columns", column_names)
-    else:
-        column_names = datasets["validation"].column_names
-        
-    text_column_name = "text" if "text" in column_names else column_names[0]
-
-    if data_args.line_by_line:
-        # When using line_by_line, we just tokenize each nonempty line.
-        padding = "max_length" if data_args.pad_to_max_length else False
-
-        def tokenize_function(examples):
-            # Remove empty lines
-            examples["text"] = [line for line in examples["text"] if len(line) > 0 and not line.isspace()]
-            return tokenizer(
-                examples["text"],
-                padding=padding,
-                truncation=True,
-                max_length=data_args.max_seq_length,
-                # We use this option because DataCollatorForLanguageModeling (see below) is more efficient when it
-                # receives the `special_tokens_mask`.
-                return_special_tokens_mask=True,
-            )
-        
-        datasets.set_transform(tokenize_function)
-        # tokenized_datasets = datasets.map(
-        #    tokenize_function,
-        #    batched=True,
-        #    num_proc=data_args.preprocessing_num_workers,
-        #    remove_columns=[text_column_name],
-        #    load_from_cache_file=not data_args.overwrite_cache,
-        # )
-        
-    else:
-        # Otherwise, we tokenize every text, then concatenate them together before splitting them in smaller parts.
-        # We use `return_special_tokens_mask=True` because DataCollatorForLanguageModeling (see below) is more
-        # efficient when it receives the `special_tokens_mask`.
-        def tokenize_function(examples):
-            return tokenizer(examples[text_column_name], return_special_tokens_mask=True)
-        
-        
-        print("Datasets preparing...")
-        # datasets.set_transform(tokenize_function)
-        tokenized_datasets = datasets.map(
-            tokenize_function,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            remove_columns=column_names,
-            load_from_cache_file=not data_args.overwrite_cache,
-        )
-        
-        print("Datasets prepared!")
-        if data_args.max_seq_length is None:
-            max_seq_length = tokenizer.model_max_length
-        else:
-            if data_args.max_seq_length > tokenizer.model_max_length:
-                logger.warn(
-                    f"The max_seq_length passed ({data_args.max_seq_length}) is larger than the maximum length for the"
-                    f"model ({tokenizer.model_max_length}). Using max_seq_length={tokenizer.model_max_length}."
-                )
-            max_seq_length = min(data_args.max_seq_length, tokenizer.model_max_length)
-
-        # Main data processing function that will concatenate all texts from our dataset and generate chunks of
-        # max_seq_length.
-        def group_texts(examples):
-            # Concatenate all texts.
-            concatenated_examples = {k: sum(examples[k], []) for k in examples.keys()}
-            total_length = len(concatenated_examples[list(examples.keys())[0]])
-            # We drop the small remainder, we could add padding if the model supported it instead of this drop, you can
-            # customize this part to your needs.
-            total_length = (total_length // max_seq_length) * max_seq_length
-            # Split by chunks of max_len.
-            result = {
-                k: [t[i : i + max_seq_length] for i in range(0, total_length, max_seq_length)]
-                for k, t in concatenated_examples.items()
-            }
-            return result
-
-        # Note that with `batched=True`, this map processes 1,000 texts together, so group_texts throws away a
-        # remainder for each of those groups of 1,000 texts. You can adjust that batch_size here but a higher value
-        # might be slower to preprocess.
-        #
-        # To speed up this part, we use multiprocessing. See the documentation of the map method for more information:
-        # https://huggingface.co/docs/datasets/package_reference/main_classes.html#datasets.Dataset.map
-        tokenized_datasets = tokenized_datasets.map(
-            group_texts,
-            batched=True,
-            num_proc=data_args.preprocessing_num_workers,
-            load_from_cache_file=not data_args.overwrite_cache,
-        )
+    
+    tokenized_datasets = RawTextDataset(data_args.tfrecords_path)
 
     # Data collator
     # This one will take care of randomly masking the tokens.
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm_probability=data_args.mlm_probability)
 
-    
-    print(tokenized_datasets["train"][:2])
     # Initialize our Trainer
     trainer = Trainer(
         model=model,
         args=training_args,
-        train_dataset=tokenized_datasets["train"] if training_args.do_train else None,
-        eval_dataset=tokenized_datasets["validation"] if training_args.do_eval else None,
+        train_dataset=tokenized_datasets,
         tokenizer=tokenizer,
         data_collator=data_collator,
     )
