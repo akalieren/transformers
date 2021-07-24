@@ -29,7 +29,10 @@ from typing import Optional
 from torch.utils.data import IterableDataset, DataLoader
 from itertools import cycle, islice
 from datasets import load_dataset
-import tensorflow as tf
+#import tensorflow as tf
+
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 tf.enable_eager_execution() # call only first execution
 
 import transformers
