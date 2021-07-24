@@ -230,7 +230,7 @@ class RawTextDataset(IterableDataset):
         return map(self.transform, self.get_stream(self.dataset))
     
     def __len__(self):
-        return self.count_dataset(dataset)
+        return 10**7
 
 
 def main():
