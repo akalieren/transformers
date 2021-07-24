@@ -185,12 +185,12 @@ class RawTextDataset(IterableDataset):
         def parse_record(data_record):
 
             features = {
-                'input_ids': tf.FixedLenFeature(512, tf.int64),
-                'attention_mask': tf.FixedLenFeature(512, tf.int64),
-                'text': tf.FixedLenFeature([], tf.string)
+                'input_ids': tf.compat.v1.FixedLenFeature(512, tf.compat.v1.int64),
+                'attention_mask': tf.compat.v1.FixedLenFeature(512, tf.compat.v1.int64),
+                'text': tf.compat.v1.FixedLenFeature([], tf.compat.v1.string)
             }
 
-            sample = tf.parse_single_example(data_record, features)
+            sample = tf.compat.v1.parse_single_example(data_record, features)
 
             return sample
         
