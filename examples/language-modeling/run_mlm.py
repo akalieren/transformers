@@ -187,16 +187,7 @@ class RawTextDataset(IterableDataset):
             tfrecord (string): Path to the tfrecord.
         """
         
-        dataset = tf.data.TFRecordDataset([tfrecord])
-        dataset = dataset.map(self.parse_record)
-        self.dataset = dataset.make_one_shot_iterator()
-        
-        print("Counting samples!")
-        self.length = self.count_dataset(dataset)
-        print("Done!")
-        
-    
-    def parse_record(self, data_record):
+        def parse_record(data_record):
 
         features = {
             'input_ids': tf.FixedLenFeature(512, tf.int64),
@@ -207,6 +198,17 @@ class RawTextDataset(IterableDataset):
         sample = tf.parse_single_example(data_record, features)
 
         return sample
+        
+        dataset = tf.data.TFRecordDataset([tfrecord])
+        dataset = dataset.map(parse_record)
+        self.dataset = dataset.make_one_shot_iterator()
+        
+        print("Counting samples!")
+        self.length = self.count_dataset(dataset)
+        print("Done!")
+        
+    
+    
 
     def count_dataset(self, obj):
         return sum(1 for e in obj)
