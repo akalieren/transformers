@@ -14,7 +14,6 @@
 # limitations under the License.
 """
 Fine-tuning the library models for masked language modeling (BERT, ALBERT, RoBERTa...) on a text file or a dataset.
-
 Here is the full list of checkpoints on the hub that can be fine-tuned by this script:
 https://huggingface.co/models?filter=masked-lm
 """
@@ -29,11 +28,8 @@ from typing import Optional
 from torch.utils.data import IterableDataset, DataLoader
 from itertools import cycle, islice
 from datasets import load_dataset
-#import tensorflow as tf
-
-import tensorflow.compat.v1 as tf
-tf.disable_v2_behavior()
-tf.enable_eager_execution() # call only first execution
+import tensorflow as tf
+tf.compat.v1.enable_eager_execution() # call only first execution
 
 import transformers
 from transformers import (
@@ -186,51 +182,47 @@ class RawTextDataset(IterableDataset):
         Args:
             tfrecord (string): Path to the tfrecord.
         """
-        
         def parse_record(data_record):
+
             features = {
                 'input_ids': tf.FixedLenFeature(512, tf.int64),
                 'attention_mask': tf.FixedLenFeature(512, tf.int64),
                 'text': tf.FixedLenFeature([], tf.string)
             }
+
             sample = tf.parse_single_example(data_record, features)
+
             return sample
         
-        dataset = tf.data.TFRecordDataset([tfrecord])
+        input_files = []
+        for input_pattern in tfrecord.split(","):
+            input_files.extend(tf.compat.v1.gfile.Glob(input_pattern))
+
+        tf.compat.v1.logging.info("*** Input Files ***")
+        for input_file in input_files:
+            tf.compat.v1.logging.info("  %s" % input_file)
+            
+        dataset = tf.compat.v1.data.TFRecordDataset([input_files])
         dataset = dataset.map(parse_record)
         self.dataset = dataset.make_one_shot_iterator()
-        
-        # print("Counting samples!")
-        # self.length = self.count_dataset(dataset)
-        # print("Done!")
-        
-    
-    
 
-    def count_dataset(self, obj):
-        return sum(1 for e in obj)
-
-    
     def transform(self, sample):
         return {
                 #"text": sample['text'].numpy().decode(),
                 "attention_mask": sample['attention_mask'].numpy(),
                 "input_ids": sample['input_ids'].numpy(),
             }
-    
+
     def get_samples(self, dataset):
         yield from dataset
-            
-    
+
+
     def get_stream(self, dataset):
         return cycle(self.get_samples(dataset))
-        
-    
+
+
     def __iter__(self):
         return map(self.transform, self.get_stream(self.dataset))
-    
-    def __len__(self):
-        return 10**7
 
 
 def main():
