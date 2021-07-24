@@ -182,6 +182,17 @@ class RawTextDataset(IterableDataset):
         Args:
             tfrecord (string): Path to the tfrecord.
         """
+        def parse_record(data_record):
+
+            features = {
+                'input_ids': tf.compat.v1.FixedLenFeature(512, tf.compat.v1.int64),
+                'attention_mask': tf.compat.v1.FixedLenFeature(512, tf.compat.v1.int64),
+                'text': tf.compat.v1.FixedLenFeature([], tf.compat.v1.string)
+            }
+
+            sample = tf.compat.v1.parse_single_example(data_record, features)
+
+            return sample
         
         input_files = []
         for input_pattern in tfrecord.split(","):
@@ -192,24 +203,9 @@ class RawTextDataset(IterableDataset):
             tf.compat.v1.logging.info("  %s" % input_file)
             
         dataset = tf.compat.v1.data.TFRecordDataset([input_files])
-        dataset = dataset.map(self.parse_record)
+        dataset = dataset.map(parse_record)
         self.dataset = dataset.make_one_shot_iterator()
-    
-    def count_dataset(self, obj):
-        return sum(1 for e in obj)
-    
-    def parse_record(self, data_record):
-        
-        features = {
-            'input_ids': tf.compat.v1.FixedLenFeature(512, tf.compat.v1.int64),
-            'attention_mask': tf.compat.v1.FixedLenFeature(512, tf.compat.v1.int64),
-            'text': tf.compat.v1.FixedLenFeature([], tf.compat.v1.string)
-        }
 
-        sample = tf.compat.v1.parse_single_example(data_record, features)
-
-        return sample
-    
     def transform(self, sample):
         return {
                 #"text": sample['text'].numpy().decode(),
@@ -228,8 +224,6 @@ class RawTextDataset(IterableDataset):
     def __iter__(self):
         return map(self.transform, self.get_stream(self.dataset))
 
-    def __len__(self):
-        return self.count_dataset(dataset)
 
 def main():
     # See all possible arguments in src/transformers/training_args.py
