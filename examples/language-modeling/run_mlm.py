@@ -200,9 +200,9 @@ class RawTextDataset(IterableDataset):
         dataset = dataset.map(parse_record)
         self.dataset = dataset.make_one_shot_iterator()
         
-        print("Counting samples!")
-        self.length = self.count_dataset(dataset)
-        print("Done!")
+        # print("Counting samples!")
+        # self.length = self.count_dataset(dataset)
+        # print("Done!")
         
     
     
