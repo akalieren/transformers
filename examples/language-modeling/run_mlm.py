@@ -186,47 +186,52 @@ class RawTextDataset(IterableDataset):
         Args:
             tfrecord (string): Path to the tfrecord.
         """
-        def parse_record(data_record):
-
-            features = {
-                'input_ids': tf.FixedLenFeature(512, tf.int64),
-                'attention_mask': tf.FixedLenFeature(512, tf.int64),
-                'text': tf.FixedLenFeature([], tf.string)
-            }
-
-            sample = tf.parse_single_example(data_record, features)
-
-            return sample
         
-        input_files = []
-        for input_pattern in tfrecord.split(","):
-            input_files.extend(tf.gfile.Glob(input_pattern))
-
-        tf.logging.info("*** Input Files ***")
-        for input_file in input_files:
-            tf.logging.info("  %s" % input_file)
-            
-        dataset = tf.data.TFRecordDataset([input_files])
-        dataset = dataset.map(parse_record)
+        dataset = tf.data.TFRecordDataset([tfrecord])
+        dataset = dataset.map(self.parse_record)
         self.dataset = dataset.make_one_shot_iterator()
+        
+        print("Counting samples!")
+        self.length = self.count_dataset(dataset)
+        print("Done!")
+        
+    
+    def parse_record(self, data_record):
 
+        features = {
+            'input_ids': tf.FixedLenFeature(512, tf.int64),
+            'attention_mask': tf.FixedLenFeature(512, tf.int64),
+            'text': tf.FixedLenFeature([], tf.string)
+        }
+
+        sample = tf.parse_single_example(data_record, features)
+
+        return sample
+
+    def count_dataset(self, obj):
+        return sum(1 for e in obj)
+
+    
     def transform(self, sample):
         return {
                 #"text": sample['text'].numpy().decode(),
                 "attention_mask": sample['attention_mask'].numpy(),
                 "input_ids": sample['input_ids'].numpy(),
             }
-
+    
     def get_samples(self, dataset):
         yield from dataset
-
-
+            
+    
     def get_stream(self, dataset):
         return cycle(self.get_samples(dataset))
-
-
+        
+    
     def __iter__(self):
         return map(self.transform, self.get_stream(self.dataset))
+    
+    def __len__(self):
+        return self.count_dataset(dataset)
 
 
 def main():
